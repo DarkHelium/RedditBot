@@ -1,0 +1,10 @@
+{
+    "manifest_version": 2,
+    "name": "Reddit Summarizer",
+    "version": "1.0",
+    "description": "Summarizes Reddit posts and comments",
+    "permissions": ["activeTab", "http://localhost:5000/"],
+    "browser_action": {
+      "default_popup": "popup.html"
+    }
+  }
