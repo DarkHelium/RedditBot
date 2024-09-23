@@ -1,14 +1,16 @@
 import praw
 import os
-from langchain.llms import OpenAI
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
+from langchain_openai import OpenAI  # Updated import
+from langchain.chains.summarize import load_summarize_chain
 from langchain.docstore.document import Document
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
+from dotenv import load_dotenv
+
 app = FastAPI()
+load_dotenv()
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,8 +25,6 @@ api_key = os.getenv('OPENAI_API_KEY')
 class RedditUrl(BaseModel):
     url: str
 
-
-
 reddit = praw.Reddit(
     client_id=os.getenv("REDDIT_CLIENT_ID"),
     client_secret=os.getenv("REDDIT_API_KEY"),
@@ -33,16 +33,15 @@ reddit = praw.Reddit(
 
 llm = OpenAI(temperature=0.5)
 
-
-chain = LLMChain(llm=llm, chain_type="map_reduce")
+chain = load_summarize_chain(llm, chain_type="map_reduce")
 
 def summarize_text(text):
-    doc = Document(page_content=text)
-    summary = chain.run([doc])
+    docs = [Document(page_content=text)]
+    summary = chain.run(docs)
     return summary
 
 @app.post("/summarize")
-async def summarize_post(reddit_url:RedditUrl):
+async def summarize_post(reddit_url: RedditUrl):
     url = reddit_url.url
 
     post_id = url.split('/')[-3]
@@ -57,9 +56,9 @@ async def summarize_post(reddit_url:RedditUrl):
         comment_summary = summarize_text(comment.body)
         comment_summaries.append(comment_summary)
     
-    summary = f"Title: {submission.title}\n\n {post_summary} \n\n Replies: \n\n"
-    for i, summary in enumerate(comment_summaries, 1):
-        final_summary += f"{i}. {summary}\n"
+    final_summary = f"Title: {submission.title}\n\n{post_summary}\n\nReplies:\n\n"
+    for i, summary_text in enumerate(comment_summaries, 1):
+        final_summary += f"{i}. {summary_text}\n"
     
     return final_summary
 
