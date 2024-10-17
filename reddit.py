@@ -18,7 +18,7 @@ load_dotenv()
 # CORS middleware configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Update this with your extension's origin or allowed origins
+    allow_origins=["chrome-extension://dhgjompomnkacadcomfjemhancdmdkmd"],  # Update this with your extension's origin or allowed origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
