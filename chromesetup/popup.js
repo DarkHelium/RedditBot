@@ -1,5 +1,3 @@
-// popup.js
-
 // Utility functions to show/hide the loader
 function showLoading() {
   document.getElementById('loader').classList.remove('hidden');
@@ -31,9 +29,13 @@ document.addEventListener('DOMContentLoaded', () => {
           return res.json();
         })
         .then((data) => {
-          // Just display the text directly
-          const summary = data.Summary || "No summary available.";
-          summaryElement.textContent = summary;
+          // If your server returns the summary in Markdown, parse it with Marked
+          // so you can have bold, italic, headings, etc.
+          const summaryMarkdown = data.Summary || "No summary available.";
+          summaryElement.innerHTML = marked.parse(summaryMarkdown);
+
+          // If you wanted plain text only, you'd do:
+          // summaryElement.textContent = summaryMarkdown;
         })
         .catch((error) => {
           console.error('Fetch error:', error);
