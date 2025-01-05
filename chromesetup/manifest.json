@@ -20,6 +20,6 @@
     }
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src http://localhost:8000 http://127.0.0.1:8000"
+    "extension_pages": "script-src 'self'; object-src 'self'"
   }
 }
