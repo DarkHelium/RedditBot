@@ -29,13 +29,17 @@ document.addEventListener('DOMContentLoaded', () => {
           return res.json();
         })
         .then((data) => {
-          // If your server returns the summary in Markdown, parse it with Marked
-          // so you can have bold, italic, headings, etc.
-          const summaryMarkdown = data.Summary || "No summary available.";
+          // Configure marked.js options for tighter spacing
+          marked.setOptions({
+            breaks: true,
+            gfm: true,
+            headerIds: false,
+            mangle: false
+          });
+          
+          // Format the summary with less spacing
+          const summaryMarkdown = data.Summary?.replace(/\n\n/g, '\n') || "No summary available.";
           summaryElement.innerHTML = marked.parse(summaryMarkdown);
-
-          // If you wanted plain text only, you'd do:
-          // summaryElement.textContent = summaryMarkdown;
         })
         .catch((error) => {
           console.error('Fetch error:', error);
