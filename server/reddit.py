@@ -52,7 +52,7 @@ if not openai_api_key:
 openai.api_key = openai_api_key
 
 # Initialize ChatOpenAI model
-llm = ChatOpenAI(model_name="gpt-4o-2024-08-06", temperature=0.5, openai_api_key=openai_api_key)
+llm = ChatOpenAI(model_name="gpt-4o-mini-2024-07-18", temperature=0.5, openai_api_key=openai_api_key)
 
 # Define the prompt template for summarization
 summary_prompt = PromptTemplate(
@@ -176,24 +176,33 @@ async def summarize_post(url: str = Query(..., description="URL of the Reddit po
             logger.error(f"Reddit API error details: {str(e)}")
             return {"error": f"Reddit API error: {str(e)}"}
 
-        # Get post content including media
-        post_content = ""
-        if hasattr(submission, 'selftext') and submission.selftext:
-            post_content = submission.selftext
-        elif hasattr(submission, 'url') and submission.url:
-            if submission.is_self:
-                post_content = submission.title
+        # Enhanced post content handling
+        post_content = [submission.title]  # Initialize with title
+        
+        # Add selftext if exists
+        if submission.selftext:
+            post_content.append(submission.selftext)
+            
+        # Handle media and links in post body
+        if hasattr(submission, 'media_metadata'):
+            media_count = len(submission.media_metadata)
+            post_content.append(f"\n[Contains {media_count} images/media in post]")
+            
+        if submission.url and not submission.is_self:
+            if 'gallery' in submission.url:
+                post_content.append("[Reddit Gallery Post]")
+            elif any(ext in submission.url for ext in ['.jpg', '.png', '.gif']):
+                post_content.append(f"[Image: {submission.url}]")
+            elif 'v.redd.it' in submission.url:
+                post_content.append("[Reddit Video]")
+            elif 'youtube.com' in submission.url or 'youtu.be' in submission.url:
+                post_content.append(f"[YouTube Video: {submission.url}]")
             else:
-                # Handle media posts
-                post_content = f"{submission.title}\n\nPost contains: "
-                if 'imgur' in submission.url or submission.url.endswith(('.jpg', '.png', '.gif')):
-                    post_content += f"[Image: {submission.url}]"
-                elif 'youtube' in submission.url or 'youtu.be' in submission.url:
-                    post_content += f"[Video: {submission.url}]"
-                else:
-                    post_content += f"[Link: {submission.url}]"
+                post_content.append(f"[External Link: {submission.url}]")
 
-        post_summary = summarize_text(post_content)
+        # Combine all content
+        full_content = "\n\n".join(post_content)
+        post_summary = summarize_text(full_content)
 
         # Gather and analyze comments with length awareness
         await submission.comments.replace_more(limit=0)
