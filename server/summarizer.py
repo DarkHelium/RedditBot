@@ -1,7 +1,7 @@
 import os
 import asyncio
 from dotenv import load_dotenv
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import openai
@@ -13,6 +13,8 @@ import certifi
 import aiohttp
 import time
 from openai import OpenAIError
+from pydantic import BaseModel
+from typing import List
 
 # Additional libraries for HTML parsing, summarization, OCR, YouTube transcripts
 import requests
@@ -41,10 +43,15 @@ load_dotenv()
 # Initialize FastAPI app
 app = FastAPI()
 
-# Configure CORS
+# Configure CORS – you can add multiple allowed origins if needed
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["chrome-extension://dhgjompomnkacadcomfjemhancdmdkmd"],
+    allow_origins=[
+        "chrome-extension://dhgjompomnkacadcomfjemhancdmdkmd",  # Your extension
+        "chrome-extension://*",  # Possibly any extension ID
+        "http://localhost:8100",  # If you happen to test from another local port
+        "http://localhost:3000"   # If you have a frontend dev server
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -70,12 +77,71 @@ if not openai_api_key:
 openai.api_key = openai_api_key
 
 # Initialize ChatOpenAI model
-# Replace "gpt-4o-mini-2024-07-18" with your actual model name, e.g., "gpt-4"
+# Replace "gpt-4o-mini-2024-07-18" with your actual model name, e.g. "gpt-4"
 llm = ChatOpenAI(
     model_name="gpt-4o-mini-2024-07-18",
     temperature=0.5,
     openai_api_key=openai_api_key
 )
+
+####################################################
+# --------------- Chat Endpoint ------------------- #
+####################################################
+
+# We'll store the entire conversation in memory for demonstration
+conversation_history: List[dict] = []
+post_context = ""  # Store the current post context
+
+class ChatRequest(BaseModel):
+    user_message: str
+    post_content: str = ""  # Make it optional with default empty string
+
+@app.post("/chat")
+async def chat_endpoint(chat_req: ChatRequest):
+    """
+    A chat endpoint that processes user messages and returns bot replies.
+    """
+    global post_context
+    user_input = chat_req.user_message
+    logger.info(f"Received user message: {user_input}")
+
+    try:
+        # Update post context if new content is received
+        if chat_req.post_content and chat_req.post_content != post_context:
+            post_context = chat_req.post_content
+            # Clear previous conversation when post changes
+            conversation_history.clear()
+            # Add system message with post context
+            conversation_history.append({
+                "role": "system",
+                "content": f"You are a helpful assistant discussing a Reddit post. Here's the post content:\n\n{post_context}\n\nPlease help the user understand and discuss this post."
+            })
+
+        # Add the user's message to the conversation
+        conversation_history.append({"role": "user", "content": user_input})
+
+        # Format messages for ChatOpenAI
+        messages = [
+            {"role": msg["role"], "content": msg["content"]} 
+            for msg in conversation_history
+        ]
+
+        # Use invoke method instead of direct call
+        response = llm.invoke(messages)
+        bot_reply = response.content
+        logger.info(f"Bot reply: {bot_reply}")
+
+        # Add the assistant's reply to conversation memory
+        conversation_history.append({"role": "assistant", "content": bot_reply})
+
+        return {"bot_reply": bot_reply}
+    except Exception as e:
+        logger.error(f"Error in chat endpoint: {str(e)}")
+        return {"bot_reply": f"Sorry, I encountered an error: {str(e)}"}
+
+####################################################
+# ----------- Summarization Endpoints ------------- #
+####################################################
 
 # Define the prompt templates
 summary_prompt = PromptTemplate(
@@ -149,7 +215,7 @@ def extract_links_from_text(text: str) -> list[str]:
     urls = re.findall(r'(https?://\S+)', text)
     cleaned_urls = []
     for url in urls:
-        url = re.sub(r'[.,!?\]\[]+$', '', url)
+        url = re.sub(r'[.,!?\]\[]+$', '', url)  # remove trailing punctuation
         cleaned_urls.append(url)
     return cleaned_urls
 
@@ -275,7 +341,6 @@ def fetch_youtube_transcript(url: str) -> str:
         return ""
     try:
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-        # Combine the transcript segments into one string
         return " ".join(seg['text'] for seg in transcript_list)
     except Exception as e:
         logger.error(f"Transcript fetch error for {url}: {str(e)}")
@@ -289,7 +354,7 @@ def summarize_image_link(url: str) -> str:
     if not ocr_text:
         return f"[Image Link: {url}, Image not found]."
     summary = summarize_link_briefly(ocr_text)
-    return summary  # Return just the summary without any header
+    return summary  # Return just the summary
 
 def summarize_youtube_link(url: str) -> str:
     """
@@ -299,7 +364,7 @@ def summarize_youtube_link(url: str) -> str:
     if not transcript:
         return f"[YouTube Video: {url}, No transcript found]"
     summary = summarize_link_briefly(transcript)
-    return summary  # Return just the summary without any header
+    return summary
 
 ##############################
 # CHUNKING FOR LARGE VIDEOS
@@ -356,22 +421,17 @@ def get_video_duration(video_path: str) -> float:
 
 def summarize_frames_with_llm(base64_frames: list[str], chunk_label="Segment") -> str:
     """
-    Summarize a set of frames by sending them to GPT-4o in a single request,
-    using a short prompt. If you have too many frames, sample them further.
+    Summarize frames by sending them to GPT in one request.
+    If you have too many frames, sample them further.
     """
-    # For demonstration, let's limit how many frames we actually send
-    # to avoid blowing the token limit
-    frames_to_send = base64_frames[:10]  # e.g. only the first 10
-
+    frames_to_send = base64_frames[:10]  # Limit to first 10 frames
     user_content = [
         f"These are frames from the video {chunk_label}. Please describe what's happening in them.",
     ]
-    # Add the images as separate objects
     for frame_b64 in frames_to_send:
         user_content.append({"image": frame_b64, "resize": 768})
 
     messages = [{"role": "user", "content": user_content}]
-    # Summarize
     response = openai.ChatCompletion.create(
         model="gpt-4o-mini-2024-07-18",
         messages=messages,
@@ -381,9 +441,8 @@ def summarize_frames_with_llm(base64_frames: list[str], chunk_label="Segment") -
 
 def summarize_video_in_chunks(video_path: str, chunk_minutes=5) -> str:
     """
-    Break a local video into 'chunk_minutes' intervals, extract frames for each chunk,
-    summarize them, and combine those sub-summaries into one final summary.
-    This is a 'hierarchical' approach to handle large videos.
+    Break a local video into intervals, extract frames, summarize each chunk,
+    then do a final summary pass.
     """
     duration = get_video_duration(video_path)
     if duration == 0.0:
@@ -396,27 +455,19 @@ def summarize_video_in_chunks(video_path: str, chunk_minutes=5) -> str:
 
     while start_sec < duration:
         end_sec = min(start_sec + chunk_duration_sec, duration)
-        
-        # Extract frames for this chunk
         frames = extract_video_frames_in_range(video_path, start_sec, end_sec, frame_interval=30)
-        # Summarize frames
         chunk_summary = summarize_frames_with_llm(frames, chunk_label=f"Chunk {chunk_index}")
         sub_summaries.append(f"**Chunk {chunk_index} Summary:** {chunk_summary}")
-
         start_sec += chunk_duration_sec
         chunk_index += 1
 
-    # 2nd pass: Summarize the sub-summaries
-    # This merges them into a final cohesive overview
     combined_sub_summaries = "\n\n".join(sub_summaries)
     final_summary_prompt = f"Summarize these chunk summaries:\n\n{combined_sub_summaries}"
-
     combined_summary_resp = openai.ChatCompletion.create(
         model="gpt-4o-mini-2024-07-18",
         messages=[{"role": "user", "content": final_summary_prompt}],
         max_tokens=500
     )
-
     final_summary = combined_summary_resp.choices[0].message.content
     return f"**All Chunk Summaries**:\n\n{combined_sub_summaries}\n\n**Final Merged Summary**:\n\n{final_summary}"
 
@@ -426,23 +477,19 @@ def summarize_video_in_chunks(video_path: str, chunk_minutes=5) -> str:
 
 def clean_paragraph_spacing(text: str) -> str:
     """
-    Replaces 2+ consecutive newlines with a single newline,
-    then strips leading/trailing whitespace.
+    Replaces 2+ consecutive newlines with a single newline.
     """
-    # For multiple consecutive newlines:
     text = re.sub(r'\n{2,}', '\n', text)
     return text.strip()
 
-############################
-# FASTAPI ENDPOINTS
-############################
+########################################
+# ---- Summarization FastAPI Routes ----
+########################################
 
 @app.get("/summarize")
 async def summarize_post(url: str = Query(..., description="URL of the Reddit post")):
     """
-    Main endpoint to summarize a given Reddit post, plus top comments.
-    Also attempts to parse and summarize any external links found in the post body, 
-    including OCR for images and transcript for YouTube videos.
+    Summarize a Reddit post + top comments. Also handle external links or images in the post.
     """
     try:
         logger.info(f"Received URL: {url}")
@@ -460,9 +507,9 @@ async def summarize_post(url: str = Query(..., description="URL of the Reddit po
             await submission.load()
             logger.info(f"Successfully fetched submission: {submission.title}")
         except asyncprawcore.exceptions.NotFound:
-            return {"error": "Reddit post not found. It may have been deleted or archived."}
+            return {"error": "Reddit post not found or it may be deleted/archived."}
         except asyncprawcore.exceptions.Forbidden:
-            return {"error": "Cannot access this Reddit post. It may be private or restricted."}
+            return {"error": "This Reddit post is private or restricted."}
         except (asyncprawcore.exceptions.ResponseException,
                 asyncprawcore.exceptions.RequestException) as e:
             logger.error(f"Reddit API error details: {str(e)}")
@@ -475,11 +522,12 @@ async def summarize_post(url: str = Query(..., description="URL of the Reddit po
         if submission.selftext:
             post_content_parts.append(submission.selftext)
 
-        # Label the main URL if it's not a self-post
+        # If there's a main URL and it's not a self-post, handle it
         if submission.url and not submission.is_self:
             if 'gallery' in submission.url:
                 post_content_parts.append("[Reddit Gallery Post]")
             elif any(ext in submission.url for ext in ['.jpg', '.png', '.gif']):
+                # Summarize image or OCR it
                 post_content_parts.append(summarize_image_link(submission.url))
             elif 'v.redd.it' in submission.url:
                 post_content_parts.append("[Reddit Video]")
@@ -488,13 +536,13 @@ async def summarize_post(url: str = Query(..., description="URL of the Reddit po
             else:
                 post_content_parts.append(f"[External Link: {submission.url}]")
 
-        # Combine into one string
+        # Combine into one big string
         full_content = "\n\n".join(post_content_parts)
 
-        # 2) Summarize the main post
+        # 2) Summarize the main post text
         post_summary = summarize_text_with_llm(full_content)
 
-        # 2b) Summarize any embedded links
+        # 2b) Summarize any embedded links inside the text
         embedded_links = extract_links_from_text(full_content)
         article_context_summaries = []
         for link in embedded_links:
@@ -512,23 +560,21 @@ async def summarize_post(url: str = Query(..., description="URL of the Reddit po
                     brief_summary = summarize_link_briefly(text_content)
                     article_context_summaries.append(("Article Context", brief_summary))
             except Exception as e:
-                logger.error(f"Could not fetch or parse link {link}: {str(e)}")
-                article_context_summaries.append(("Error", f"[Unable to access or summarize link: {link}]"))
+                logger.error(f"Could not fetch/parse link {link}: {str(e)}")
+                article_context_summaries.append(("Error", f"[Unable to summarize link: {link}]"))
 
         # 3) Summarize top comments
         await submission.comments.replace_more(limit=0)
         top_comments = list(submission.comments)[:15]
         comment_texts = []
         total_comment_words = 0
-
         for comment in top_comments:
             await comment.load()
             comment_texts.append(comment.body)
             total_comment_words += get_word_count(comment.body)
-
         combined_comments = "\n\n---\n\n".join(comment_texts)
-        length_guidance = get_comment_length_guidance(len(comment_texts), total_comment_words)
 
+        length_guidance = get_comment_length_guidance(len(comment_texts), total_comment_words)
         dynamic_comment_prompt = PromptTemplate(
             input_variables=["comments", "length_guidance"],
             template="""Analyze these Reddit comments and provide a clear analysis.
@@ -544,7 +590,6 @@ Focus on:
 Comments to analyze:
 {comments}"""
         )
-
         chain = dynamic_comment_prompt | llm
         comment_analysis = chain.invoke({
             "comments": combined_comments,
@@ -552,21 +597,15 @@ Comments to analyze:
         })
         comments_summary = comment_analysis.content.strip()
 
-        # 4) Format final summary with dynamic headers
+        # 4) Combine it into a final summary
         final_summary_parts = []
         final_summary_parts.append(f"**Post Summary:**\n\n{post_summary.strip()}\n")
-
-        # Format each summary with its appropriate header
         for header, content in article_context_summaries:
             final_summary_parts.append(f"**{header}:**\n\n{content.strip()}\n")
-
         final_summary_parts.append(f"**What People Said:**\n\n{comments_summary}")
-        # Join them with double newlines
+
         draft_summary = "\n\n".join(final_summary_parts)
-
-        # 5) Clean extra spacing
         cleaned_summary = clean_paragraph_spacing(draft_summary)
-
         return {"Summary": cleaned_summary}
 
     except Exception as e:
@@ -588,6 +627,9 @@ def summarize_video_endpoint(video_path: str, chunk_minutes: int = 5):
 
 @app.get("/test-reddit")
 async def test_reddit_connection():
+    """
+    Quick check to see if Reddit credentials are working.
+    """
     try:
         await reddit.user.me()
         return {"status": "success", "message": "Reddit credentials are working"}
@@ -597,6 +639,9 @@ async def test_reddit_connection():
 
 @app.on_event("shutdown")
 async def cleanup():
+    """
+    Make sure to close the reddit client when the app stops.
+    """
     await reddit.close()
 
 def make_openai_request(attempt=1, max_attempts=3):
@@ -604,10 +649,10 @@ def make_openai_request(attempt=1, max_attempts=3):
     Example helper for gracefully handling OpenAI requests.
     """
     try:
-        return openai.ChatCompletion.create(...)  # Replace ... with your actual parameters
+        return openai.ChatCompletion.create(...)  # Replace with your parameters
     except OpenAIError as e:
         if "insufficient_quota" in str(e):
-            print("API quota exceeded. Please check your billing status at platform.openai.com")
+            print("API quota exceeded. Check your usage at platform.openai.com")
             return None
         elif attempt < max_attempts:
             wait_time = min(2 ** attempt, 8)
@@ -616,5 +661,9 @@ def make_openai_request(attempt=1, max_attempts=3):
         else:
             raise e
 
+############################
+# MAIN (if you want to run)
+############################
 if __name__ == "__main__":
+    # Run on port 8000 by default
     uvicorn.run(app, host="0.0.0.0", port=8000)
