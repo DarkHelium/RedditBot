@@ -114,7 +114,18 @@ async def chat_endpoint(chat_req: ChatRequest):
             # Add system message with post context
             conversation_history.append({
                 "role": "system",
-                "content": f"You are a helpful assistant discussing a Reddit post. Here's the post content:\n\n{post_context}\n\nPlease help the user understand and discuss this post."
+                "content": f"""You are a concise assistant discussing a Reddit post. Here's the post content:
+
+{post_context}
+
+Guidelines for your responses:
+- Keep responses short and focused (2-4 sentences maximum)
+- Be direct and get straight to the point
+- Avoid unnecessary details or elaboration
+- Use simple, clear language
+- Only provide longer responses if explicitly requested
+
+Please help the user understand and discuss this post while following these guidelines."""
             })
 
         # Add the user's message to the conversation

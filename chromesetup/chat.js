@@ -5,7 +5,61 @@ document.addEventListener('DOMContentLoaded', () => {
     const chatLoader = document.querySelector('.chat-loader');
     let currentPostContent = '';
 
-    const BOT_ICON = `<svg version="1.0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 90" class="message-icon"><g transform="translate(0.000000,90.000000) scale(0.017578,-0.017578)"><path d="M2345 4889 c-820 -85 -1509 -558 -1873 -1285 -49 -99 -132 -298 -132 -319 0 -3 149 -5 331 -5 l331 0 -6 -32 c-4 -18 -9 -117 -13 -220 l-5 -186 -37 -7 c-20 -3 -69 -22 -109 -41 -268 -128 -351 -483 -167 -717 71 -90 179 -158 275 -173 l40 -7 0 -136 c0 -78 6 -164 14 -202 37 -171 151 -303 321 -370 59 -23 69 -24 423 -27 351 -3 362 -4 373 -24 8 -14 7 -28 -1 -48 -9 -21 -9 -33 0 -50 9 -17 9 -29 0 -51 -10 -23 -10 -35 0 -58 9 -22 9 -34 0 -51 -9 -17 -9 -29 0 -50 7 -16 9 -33 6 -38 -3 -5 -52 -12 -108 -15 -207 -13 -408 -88 -533 -200 l-59 -54 44 -26 c72 -41 278 -132 365 -160 392 -127 823 -151 1225 -67 193 40 459 140 610 227 l44 26 -59 54 c-68 62 -227 145 -320 168 -82 20 -189 35 -257 35 -64 0 -75 9 -58 50 9 21 9 33 0 50 -9 17 -9 29 0 51 10 23 10 35 0 58 -9 22 -9 34 0 51 9 17 9 29 0 50 -8 20 -9 34 -1 48 11 20 22 21 373 24 342 4 366 5 420 25 167 63 287 201 324 372 8 38 14 124 14 202 l0 136 42 7 c23 4 70 20 103 36 186 89 293 290 264 498 -12 92 -66 199 -134 266 -57 58 -168 120 -233 131 l-40 6 -5 187 c-4 103 -9 202 -13 220 l-6 32 331 0 c182 0 331 2 331 5 0 3 -16 50 -36 103 -295 790 -1012 1365 -1855 1487 -130 19 -425 27 -544 14z m-114 -2430 c19 -19 21 -29 16 -96 -7 -92 -33 -147 -96 -206 -135 -126 -347 -90 -436 75 -23 43 -30 68 -33 134 -6 118 -17 114 285 114 235 0 244 -1 264 -21z m1188 5 c22 -16 23 -22 19 -98 -3 -66 -10 -91 -33 -134 -89 -164 -296 -200 -433 -77 -65 59 -92 115 -99 208 -5 67 -3 77 16 96 20 20 29 21 264 21 209 0 246 -2 266 -16z"/></g></svg>`;
+    const BOT_ICON = `<svg width="24" height="24" class="message-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 216 216" xml:space="preserve" xmlns:xlink="http://www.w3.org/1999/xlink">
+      <defs>
+        <radialGradient id="snoo-radial-gragient" cx="169.75" cy="92.19" fx="169.75" fy="92.19" r="50.98" gradientTransform="translate(0 11.64) scale(1 .87)" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#feffff"></stop>
+          <stop offset=".4" stop-color="#feffff"></stop>
+          <stop offset=".51" stop-color="#f9fcfc"></stop>
+          <stop offset=".62" stop-color="#edf3f5"></stop>
+          <stop offset=".7" stop-color="#dee9ec"></stop>
+          <stop offset=".72" stop-color="#d8e4e8"></stop>
+          <stop offset=".76" stop-color="#ccd8df"></stop>
+          <stop offset=".8" stop-color="#c8d5dd"></stop>
+          <stop offset=".83" stop-color="#ccd6de"></stop>
+          <stop offset=".85" stop-color="#d8dbe2"></stop>
+          <stop offset=".88" stop-color="#ede3e9"></stop>
+          <stop offset=".9" stop-color="#ffebef"></stop>
+        </radialGradient>
+        <radialGradient id="snoo-radial-gragient-2" cx="47.31" fx="47.31" r="50.98" xlink:href="#snoo-radial-gragient"></radialGradient>
+        <radialGradient id="snoo-radial-gragient-3" cx="109.61" cy="85.59" fx="109.61" fy="85.59" r="153.78" gradientTransform="translate(0 25.56) scale(1 .7)" xlink:href="#snoo-radial-gragient"></radialGradient>
+        <radialGradient id="snoo-radial-gragient-4" cx="-6.01" cy="64.68" fx="-6.01" fy="64.68" r="12.85" gradientTransform="translate(81.08 27.26) scale(1.07 1.55)" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#f60"></stop>
+          <stop offset=".5" stop-color="#ff4500"></stop>
+          <stop offset=".7" stop-color="#fc4301"></stop>
+          <stop offset=".82" stop-color="#f43f07"></stop>
+          <stop offset=".92" stop-color="#e53812"></stop>
+          <stop offset="1" stop-color="#d4301f"></stop>
+        </radialGradient>
+        <radialGradient id="snoo-radial-gragient-5" cx="-73.55" cy="64.68" fx="-73.55" fy="64.68" r="12.85" gradientTransform="translate(62.87 27.26) rotate(-180) scale(1.07 -1.55)" xlink:href="#snoo-radial-gragient-4"></radialGradient>
+        <radialGradient id="snoo-radial-gragient-6" cx="107.93" cy="166.96" fx="107.93" fy="166.96" r="45.3" gradientTransform="translate(0 57.4) scale(1 .66)" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#172e35"></stop>
+          <stop offset=".29" stop-color="#0e1c21"></stop>
+          <stop offset=".73" stop-color="#030708"></stop>
+          <stop offset="1" stop-color="#000"></stop>
+        </radialGradient>
+        <radialGradient id="snoo-radial-gragient-7" cx="147.88" cy="32.94" fx="147.88" fy="32.94" r="39.77" gradientTransform="translate(0 .54) scale(1 .98)" xlink:href="#snoo-radial-gragient"></radialGradient>
+        <radialGradient id="snoo-radial-gragient-8" cx="131.31" cy="73.08" fx="131.31" fy="73.08" r="32.6" gradientUnits="userSpaceOnUse">
+          <stop offset=".48" stop-color="#7a9299"></stop>
+          <stop offset=".67" stop-color="#172e35"></stop>
+          <stop offset=".75" stop-color="#000"></stop>
+          <stop offset=".82" stop-color="#172e35"></stop>
+        </radialGradient>
+      </defs>
+      <path class="snoo-cls-10" fill="#ff4500" d="m108,0h0C48.35,0,0,48.35,0,108h0c0,29.82,12.09,56.82,31.63,76.37l-20.57,20.57c-4.08,4.08-1.19,11.06,4.58,11.06h92.36s0,0,0,0c59.65,0,108-48.35,108-108h0C216,48.35,167.65,0,108,0Z"></path>
+      <circle class="snoo-cls-1" fill="url(#snoo-radial-gragient)" cx="169.22" cy="106.98" r="25.22"></circle>
+      <circle class="snoo-cls-2" fill="url(#snoo-radial-gragient-2)" cx="46.78" cy="106.98" r="25.22"></circle>
+      <ellipse class="snoo-cls-3" fill="url(#snoo-radial-gragient-3)" cx="108.06" cy="128.64" rx="72" ry="54"></ellipse>
+      <path class="snoo-cls-4" fill="url(#snoo-radial-gragient-4)" d="m86.78,123.48c-.42,9.08-6.49,12.38-13.56,12.38s-12.46-4.93-12.04-14.01c.42-9.08,6.49-15.02,13.56-15.02s12.46,7.58,12.04,16.66Z"></path>
+      <path class="snoo-cls-7" fill="url(#snoo-radial-gragient-5)" d="m129.35,123.48c.42,9.08,6.49,12.38,13.56,12.38s12.46-4.93,12.04-14.01c-.42-9.08-6.49-15.02-13.56-15.02s-12.46,7.58-12.04,16.66Z"></path>
+      <ellipse class="snoo-cls-11" fill="#ffc49c" cx="79.63" cy="116.37" rx="2.8" ry="3.05"></ellipse>
+      <ellipse class="snoo-cls-11" fill="#ffc49c" cx="146.21" cy="116.37" rx="2.8" ry="3.05"></ellipse>
+      <path class="snoo-cls-5" fill="url(#snoo-radial-gragient-6)" d="m108.06,142.92c-8.76,0-17.16.43-24.92,1.22-1.33.13-2.17,1.51-1.65,2.74,4.35,10.39,14.61,17.69,26.57,17.69s22.23-7.3,26.57-17.69c.52-1.23-.33-2.61-1.65-2.74-7.77-.79-16.16-1.22-24.92-1.22Z"></path>
+      <circle class="snoo-cls-8" fill="url(#snoo-radial-gragient-7)" cx="147.49" cy="49.43" r="17.87"></circle>
+      <path class="snoo-cls-6" fill="url(#snoo-radial-gragient-8)" d="m107.8,76.92c-2.14,0-3.87-.89-3.87-2.27,0-16.01,13.03-29.04,29.04-29.04,2.14,0,3.87,1.73,3.87,3.87s-1.73,3.87-3.87,3.87c-11.74,0-21.29,9.55-21.29,21.29,0,1.38-1.73,2.27-3.87,2.27Z"></path>
+      <path class="snoo-cls-9" fill="#842123" d="m62.82,122.65c.39-8.56,6.08-14.16,12.69-14.16,6.26,0,11.1,6.39,11.28,14.33.17-8.88-5.13-15.99-12.05-15.99s-13.14,6.05-13.56,15.2c-.42,9.15,4.97,13.83,12.04,13.83.17,0,.35,0,.52,0-6.44-.16-11.3-4.79-10.91-13.2Z"></path>
+      <path class="snoo-cls-9" fill="#842123" d="m153.3,122.65c-.39-8.56-6.08-14.16-12.69-14.16-6.26,0-11.1,6.39-11.28,14.33-.17-8.88,5.13-15.99,12.05-15.99,7.07,0,13.14,6.05,13.56,15.2.42,9.15-4.97,13.83-12.04,13.83-.17,0-.35,0-.52,0,6.44-.16,11.3-4.79,10.91-13.2Z"></path>
+    </svg>`;
     
     const USER_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 90" class="message-icon"><path d="M 45 0 C 20.147 0 0 20.147 0 45 c 0 24.853 20.147 45 45 45 s 45 -20.147 45 -45 C 90 20.147 69.853 0 45 0 z M 45 22.007 c 8.899 0 16.14 7.241 16.14 16.14 c 0 8.9 -7.241 16.14 -16.14 16.14 c -8.9 0 -16.14 -7.24 -16.14 -16.14 C 28.86 29.248 36.1 22.007 45 22.007 z M 45 83.843 c -11.135 0 -21.123 -4.885 -27.957 -12.623 c 3.177 -5.75 8.144 -10.476 14.05 -13.341 c 2.009 -0.974 4.354 -0.958 6.435 0.041 c 2.343 1.126 4.857 1.696 7.473 1.696 c 2.615 0 5.13 -0.571 7.473 -1.696 c 2.083 -1 4.428 -1.015 6.435 -0.041 c 5.906 2.864 10.872 7.591 14.049 13.341 C 66.123 78.957 56.135 83.843 45 83.843 z"/></svg>`;
   
@@ -50,6 +104,13 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     };
 
+    // Function to escape HTML special characters
+    const escapeHtml = (text) => {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    };
+
     // Initialize post content when chat is opened
     const initializeChat = async () => {
       currentPostContent = await getCurrentPostContent();
@@ -75,7 +136,7 @@ document.addEventListener('DOMContentLoaded', () => {
       userMsgDiv.classList.add('message', 'user-message');
       userMsgDiv.innerHTML = `
         ${USER_ICON}
-        <div class="message-bubble">${userMessage}</div>
+        <div class="message-bubble">${escapeHtml(userMessage)}</div>
       `;
       chatMessages.appendChild(userMsgDiv);
   
@@ -108,7 +169,7 @@ document.addEventListener('DOMContentLoaded', () => {
           botMsgDiv.classList.add('message', 'bot-message');
           botMsgDiv.innerHTML = `
             ${BOT_ICON}
-            <div class="message-bubble">${data.bot_reply}</div>
+            <div class="message-bubble">${escapeHtml(data.bot_reply)}</div>
           `;
           chatMessages.appendChild(botMsgDiv);
           chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -119,7 +180,7 @@ document.addEventListener('DOMContentLoaded', () => {
         errorMsgDiv.classList.add('message', 'bot-message');
         errorMsgDiv.innerHTML = `
           ${BOT_ICON}
-          <div class="message-bubble">Error: ${err.message}. Make sure the chat server is running on port 8000.</div>
+          <div class="message-bubble">Error: ${escapeHtml(err.message)}. Make sure the chat server is running on port 8000.</div>
         `;
         chatMessages.appendChild(errorMsgDiv);
       } finally {
