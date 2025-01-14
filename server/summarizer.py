@@ -222,11 +222,17 @@ def get_comment_length_guidance(comment_count: int, total_words: int) -> str:
         return "8-12 sentences, including detailed analysis of trends and unique perspectives"
 
 def extract_links_from_text(text: str) -> list[str]:
-    """Finds all URLs (http or https) in a piece of text and cleans them."""
+    """Finds all URLs (http, https, or /r/ paths) in a piece of text and cleans them."""
+    # Find absolute URLs
     urls = re.findall(r'(https?://\S+)', text)
+    # Find relative Reddit URLs
+    reddit_paths = re.findall(r'(/r/\S+)', text)
+    
     cleaned_urls = []
-    for url in urls:
-        url = re.sub(r'[.,!?\]\[]+$', '', url)  # remove trailing punctuation
+    for url in urls + reddit_paths:
+        # Remove trailing punctuation, parentheses, and brackets
+        url = re.sub(r'[.,!?\]\[()]+$', '', url)  # Added () to remove trailing parentheses
+        url = normalize_reddit_url(url)  # convert relative URLs to absolute
         cleaned_urls.append(url)
     return cleaned_urls
 
@@ -236,6 +242,39 @@ def is_image_link(url: str) -> bool:
 def is_video_link(url: str) -> bool:
     return any(ext in url.lower() for ext in ['.mp4', '.mov', '.avi', 'v.redd.it', 'youtube.com', 'youtu.be'])
 
+def clean_html_content(html_content: str) -> str:
+    """
+    Takes raw HTML content and returns cleaned text version.
+    """
+    try:
+        # Use readability to extract main content
+        doc = Document(html_content)
+        
+        # Get both title and content
+        title = doc.title()
+        content = doc.summary()
+        
+        # Clean the HTML content
+        soup = BeautifulSoup(content, "html.parser")
+        
+        # Remove script and style elements
+        for element in soup(["script", "style"]):
+            element.decompose()
+            
+        # Get text and clean up whitespace
+        text = soup.get_text(separator="\n")
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        cleaned_text = "\n\n".join(lines)
+        
+        # Combine title and content
+        if title:
+            return f"Title: {title}\n\n{cleaned_text}"
+        return cleaned_text
+        
+    except Exception as e:
+        logger.error(f"Failed to clean HTML content: {str(e)}")
+        return ""
+
 def fetch_clean_html_content(url: str) -> str:
     """
     Downloads the given URL, uses readability-lxml to identify the main article content,
@@ -243,13 +282,20 @@ def fetch_clean_html_content(url: str) -> str:
     """
     logger.info(f"Fetching content from {url}")
     try:
-        response = requests.get(url, timeout=10)
+        # Check if the content is raw HTML (starts with <!DOCTYPE or <html)
+        if url.strip().lower().startswith(("<!doctype", "<html")):
+            return clean_html_content(url)
+            
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, timeout=10, headers=headers)
         response.raise_for_status()
+        return clean_html_content(response.text)
+        
     except Exception as e:
+        logger.error(f"Failed to fetch URL: {url} => {str(e)}")
         raise RuntimeError(f"Failed to fetch URL: {url} => {str(e)}")
-
-    doc = Document(response.text)
-    return BeautifulSoup(doc.summary(), "html.parser").get_text(separator="\n")
 
 def create_summary_prompt(text: str, length_guidance: str) -> PromptTemplate:
     """
@@ -297,10 +343,11 @@ def summarize_link_briefly(text: str) -> str:
     
     short_link_prompt = PromptTemplate(
         input_variables=["text"],
-        template="""Please provide a concise 2-3 sentence summary of the following text, 
-so that the reader can quickly understand what it's about:
+        template="""Please provide a concise 2-3 sentence summary of this article content. Focus on the main points and key information:
 
-{text}"""
+{text}
+
+Start your response with "The article discusses" or similar introductory phrase."""
     )
     
     try:
@@ -497,6 +544,14 @@ def clean_paragraph_spacing(text: str) -> str:
 # ---- Summarization FastAPI Routes ----
 ########################################
 
+def normalize_reddit_url(url: str) -> str:
+    """
+    Converts relative Reddit URLs to absolute URLs.
+    """
+    if url.startswith('/r/'):
+        return f'https://reddit.com{url}'
+    return url
+
 @app.get("/summarize")
 async def summarize_post(url: str = Query(..., description="URL of the Reddit post")):
     """
@@ -504,6 +559,9 @@ async def summarize_post(url: str = Query(..., description="URL of the Reddit po
     """
     try:
         logger.info(f"Received URL: {url}")
+        
+        # Normalize the URL if it's a relative Reddit URL
+        url = normalize_reddit_url(url)
 
         # Verify Reddit credentials
         try:
@@ -526,25 +584,59 @@ async def summarize_post(url: str = Query(..., description="URL of the Reddit po
             logger.error(f"Reddit API error details: {str(e)}")
             return {"error": f"Reddit API error: {str(e)}"}
 
+        # Handle cross-posts and linked posts
+        linked_post_content = ""
+        if hasattr(submission, 'crosspost_parent_list') and submission.crosspost_parent_list:
+            try:
+                # Get the original post from crosspost
+                original_submission = await reddit.submission(id=submission.crosspost_parent_list[0]['id'])
+                await original_submission.load()
+                linked_post_content = f"\nOriginal Post Content:\n{original_submission.title}\n{original_submission.selftext}"
+            except Exception as e:
+                logger.error(f"Error fetching crosspost: {str(e)}")
+        elif submission.url and 'reddit.com/r/' in submission.url and not submission.is_self:
+            try:
+                # Extract submission ID from the URL and fetch the linked post
+                linked_url = submission.url
+                linked_submission = await reddit.submission(url=linked_url)
+                await linked_submission.load()
+                linked_post_content = f"\nLinked Post Content:\n{linked_submission.title}\n{linked_submission.selftext}"
+            except Exception as e:
+                logger.error(f"Error fetching linked post: {str(e)}")
+
         # 1) Collect main post content
         post_content_parts = []
         if submission.title:
             post_content_parts.append(submission.title)
         if submission.selftext:
             post_content_parts.append(submission.selftext)
+        if linked_post_content:
+            post_content_parts.append(linked_post_content)
 
         # If there's a main URL and it's not a self-post, handle it
         if submission.url and not submission.is_self:
-            if 'gallery' in submission.url:
-                post_content_parts.append("[Reddit Gallery Post]")
-            elif any(ext in submission.url for ext in ['.jpg', '.png', '.gif']):
-                # Summarize image or OCR it
-                post_content_parts.append(summarize_image_link(submission.url))
-            elif 'v.redd.it' in submission.url:
-                post_content_parts.append("[Reddit Video]")
-            elif 'youtube.com' in submission.url or 'youtu.be' in submission.url:
-                post_content_parts.append(summarize_youtube_link(submission.url))
-            else:
+            try:
+                if 'gallery' in submission.url:
+                    post_content_parts.append("[Reddit Gallery Post]")
+                elif any(ext in submission.url for ext in ['.jpg', '.png', '.gif']):
+                    # Summarize image or OCR it
+                    post_content_parts.append(summarize_image_link(submission.url))
+                elif 'v.redd.it' in submission.url:
+                    post_content_parts.append("[Reddit Video]")
+                elif 'youtube.com' in submission.url or 'youtu.be' in submission.url:
+                    post_content_parts.append(summarize_youtube_link(submission.url))
+                elif not any(domain in submission.url for domain in ['reddit.com/r/', '/r/']):  # Only for non-Reddit URLs
+                    # Fetch and summarize external link content
+                    try:
+                        normalized_url = normalize_reddit_url(submission.url)
+                        article_content = fetch_clean_html_content(normalized_url)
+                        article_summary = summarize_link_briefly(article_content)
+                        post_content_parts.append(f"\nLinked Article Summary:\n{article_summary}")
+                    except Exception as e:
+                        logger.error(f"Error summarizing external link: {str(e)}")
+                        post_content_parts.append(f"[External Link: {submission.url}]")
+            except Exception as e:
+                logger.error(f"Error processing URL {submission.url}: {str(e)}")
                 post_content_parts.append(f"[External Link: {submission.url}]")
 
         # Combine into one big string
