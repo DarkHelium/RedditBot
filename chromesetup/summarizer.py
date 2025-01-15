@@ -101,20 +101,23 @@ async def chat_endpoint(chat_req: ChatRequest):
     """
     A chat endpoint that processes user messages and returns bot replies.
     """
-    global post_context
+    global post_context, conversation_history
     user_input = chat_req.user_message
     logger.info(f"Received user message: {user_input}")
 
     try:
         # Update post context if new content is received
-        if chat_req.post_content and chat_req.post_content != post_context:
-            post_context = chat_req.post_content
+        if chat_req.post_content:
             # Clear previous conversation when post changes
-            conversation_history.clear()
-            # Add system message with post context
-            conversation_history.append({
-                "role": "system",
-                "content": f"""You are a concise assistant discussing a Reddit post. Here's the post content:
+            if chat_req.post_content != post_context:
+                logger.info("New post content received, resetting conversation")
+                conversation_history.clear()
+                post_context = chat_req.post_content
+                
+                # Add system message with post context
+                conversation_history.append({
+                    "role": "system",
+                    "content": f"""You are a concise assistant discussing a Reddit post. Here's the post content:
 
 {post_context}
 
@@ -126,6 +129,14 @@ Guidelines for your responses:
 - Only provide longer responses if explicitly requested
 
 Please help the user understand and discuss this post while following these guidelines."""
+                })
+                logger.info("Added system message with post context")
+
+        # If no post context is set, use a default system message
+        if not conversation_history:
+            conversation_history.append({
+                "role": "system",
+                "content": "You are a concise assistant. Keep responses short and focused."
             })
 
         # Add the user's message to the conversation
@@ -140,7 +151,7 @@ Please help the user understand and discuss this post while following these guid
         # Use invoke method instead of direct call
         response = llm.invoke(messages)
         bot_reply = response.content
-        logger.info(f"Bot reply: {bot_reply}")
+        logger.info(f"Generated bot reply: {bot_reply}")
 
         # Add the assistant's reply to conversation memory
         conversation_history.append({"role": "assistant", "content": bot_reply})
@@ -231,8 +242,8 @@ def extract_links_from_text(text: str) -> list[str]:
     cleaned_urls = []
     for url in urls + reddit_paths:
         # Remove trailing punctuation, parentheses, and brackets
-        url = re.sub(r'[.,!?\]\[()]+$', '', url)  # Added () to remove trailing parentheses
-        url = normalize_reddit_url(url)  # convert relative URLs to absolute
+        url = re.sub(r'[.,!?\]\[()]+$', '', url)
+        url = normalize_reddit_url(url)  # Convert relative URLs to absolute
         cleaned_urls.append(url)
     return cleaned_urls
 
@@ -336,18 +347,20 @@ def summarize_text_with_llm(text: str) -> str:
 
 def summarize_link_briefly(text: str) -> str:
     """
-    Produces a concise 2-3 sentence summary for external links.
+    Produces a concise 2-3 sentence summary for external links or video transcripts.
     """
     if not text.strip():
         return "No content to summarize."
     
     short_link_prompt = PromptTemplate(
         input_variables=["text"],
-        template="""Please provide a concise 2-3 sentence summary of this article content. Focus on the main points and key information:
+        template="""Please provide a concise 2-3 sentence summary of this content. 
 
 {text}
 
-Start your response with "The article discusses" or similar introductory phrase."""
+Start your response with "The article discusses" or similar introductory phrase if it's an article. 
+If it is a youtube link then start your response with "The youtube video shows..." or a similar phrase.
+"""
     )
     
     try:
@@ -382,27 +395,56 @@ def get_video_id(youtube_url: str) -> str:
     """
     Extracts the video_id from typical youtube.com or youtu.be URLs.
     """
-    parsed = urlparse(youtube_url)
-    if parsed.hostname == 'youtu.be':
-        return parsed.path[1:]
-    elif 'youtube.com' in parsed.hostname:
-        qs = parse_qs(parsed.query)
-        return qs.get('v', [None])[0]
-    return None
+    try:
+        parsed = urlparse(youtube_url)
+        if parsed.hostname == 'youtu.be':
+            return parsed.path[1:]
+        elif parsed.hostname and 'youtube.com' in parsed.hostname:
+            qs = parse_qs(parsed.query)
+            return qs.get('v', [None])[0]
+        return None
+    except Exception as e:
+        logger.error(f"Failed to extract YouTube video ID from {youtube_url}: {str(e)}")
+        return None
 
-def fetch_youtube_transcript(url: str) -> str:
+def summarize_youtube_link(url: str) -> str:
     """
-    Attempts to fetch the YouTube transcript for the given video URL.
+    Fetches YouTube transcript and provides a summary if available.
+    If no transcript is found, returns a clear message.
     """
     video_id = get_video_id(url)
     if not video_id:
-        return ""
+        return "Could not process YouTube video URL."
+    
     try:
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-        return " ".join(seg['text'] for seg in transcript_list)
+        # First try to get available transcript languages
+        try:
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            # Try English first
+            try:
+                transcript = transcript_list.find_transcript(['en'])
+                transcript_text = " ".join(seg['text'] for seg in transcript.fetch())
+            except:
+                # If no English, try auto-generated
+                try:
+                    transcript = transcript_list.find_generated_transcript(['en'])
+                    transcript_text = " ".join(seg['text'] for seg in transcript.fetch())
+                except:
+                    # If no English at all, get the first available language
+                    transcript = transcript_list.find_manually_created_transcript()
+                    transcript_text = " ".join(seg['text'] for seg in transcript.fetch())
+        except:
+            # If listing fails, try direct fetch (legacy approach)
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+            transcript_text = " ".join(seg['text'] for seg in transcript_list)
+
+        if not transcript_text.strip():
+            return "No transcript found for this YouTube video."
+            
+        return summarize_link_briefly(transcript_text)
     except Exception as e:
-        logger.error(f"Transcript fetch error for {url}: {str(e)}")
-        return ""
+        logger.error(f"Failed to get transcript for YouTube video {url}: {str(e)}")
+        return "No transcript found for this YouTube video."
 
 def summarize_image_link(url: str) -> str:
     """
@@ -410,19 +452,9 @@ def summarize_image_link(url: str) -> str:
     """
     ocr_text = extract_text_from_image(url)
     if not ocr_text:
-        return f"[Image Link: {url}, Image not found]."
+        return f"[Image Link: {url}, Image not found or no text detected]."
     summary = summarize_link_briefly(ocr_text)
     return summary  # Return just the summary
-
-def summarize_youtube_link(url: str) -> str:
-    """
-    Fetches YouTube transcript and provides a brief summary if available.
-    """
-    transcript = fetch_youtube_transcript(url)
-    if not transcript:
-        return f"[YouTube Video: {url}, No transcript found]"
-    summary = summarize_link_briefly(transcript)
-    return summary
 
 ##############################
 # CHUNKING FOR LARGE VIDEOS
@@ -466,7 +498,7 @@ def extract_video_frames_in_range(video_path: str, start_sec: float, end_sec: fl
     return base64_frames
 
 def get_video_duration(video_path: str) -> float:
-    """ Return the total duration (in seconds) of the given video file. """
+    """Return the total duration (in seconds) of the given video file."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         logger.error(f"Could not open video file: {video_path}")
@@ -608,6 +640,16 @@ async def summarize_post(url: str = Query(..., description="URL of the Reddit po
         post_content_parts = []
         if submission.title:
             post_content_parts.append(submission.title)
+            
+        # Check for poll results first
+        poll_results = get_poll_results(submission)
+        if poll_results:
+            post_content_parts.append(poll_results)
+            # If it's just a poll with no additional content, 
+            # and there's no selftext or external URL, you could return now:
+            if not submission.selftext and not submission.url:
+                return {"Summary": poll_results}
+                
         if submission.selftext:
             post_content_parts.append(submission.selftext)
         if linked_post_content:
@@ -616,25 +658,17 @@ async def summarize_post(url: str = Query(..., description="URL of the Reddit po
         # If there's a main URL and it's not a self-post, handle it
         if submission.url and not submission.is_self:
             try:
-                if 'gallery' in submission.url:
-                    post_content_parts.append("[Reddit Gallery Post]")
-                elif any(ext in submission.url for ext in ['.jpg', '.png', '.gif']):
-                    # Summarize image or OCR it
-                    post_content_parts.append(summarize_image_link(submission.url))
-                elif 'v.redd.it' in submission.url:
-                    post_content_parts.append("[Reddit Video]")
-                elif 'youtube.com' in submission.url or 'youtu.be' in submission.url:
-                    post_content_parts.append(summarize_youtube_link(submission.url))
-                elif not any(domain in submission.url for domain in ['reddit.com/r/', '/r/']):  # Only for non-Reddit URLs
-                    # Fetch and summarize external link content
-                    try:
-                        normalized_url = normalize_reddit_url(submission.url)
-                        article_content = fetch_clean_html_content(normalized_url)
-                        article_summary = summarize_link_briefly(article_content)
-                        post_content_parts.append(f"\nLinked Article Summary:\n{article_summary}")
-                    except Exception as e:
-                        logger.error(f"Error summarizing external link: {str(e)}")
-                        post_content_parts.append(f"[External Link: {submission.url}]")
+                # Skip summarizing links that lead back to reddit.com or /r/
+                if ('reddit.com' not in submission.url.lower()) and ('/r/' not in submission.url.lower()):
+                    # Summarize external link content
+                    normalized_url = normalize_reddit_url(submission.url)
+                    article_content = fetch_clean_html_content(normalized_url)
+                    article_summary = summarize_link_briefly(article_content)
+                    post_content_parts.append(f"\nLinked Article Summary:\n{article_summary}")
+                else:
+                    # It's a Reddit link; skip external summarization
+                    pass
+
             except Exception as e:
                 logger.error(f"Error processing URL {submission.url}: {str(e)}")
                 post_content_parts.append(f"[External Link: {submission.url}]")
@@ -649,6 +683,7 @@ async def summarize_post(url: str = Query(..., description="URL of the Reddit po
         embedded_links = extract_links_from_text(full_content)
         article_context_summaries = []
         for link in embedded_links:
+            # If the embedded link is truly external, attempt summarization
             try:
                 if is_image_link(link):
                     summary = summarize_image_link(link)
@@ -659,9 +694,14 @@ async def summarize_post(url: str = Query(..., description="URL of the Reddit po
                 elif is_video_link(link):
                     article_context_summaries.append(("Video Content", f"[Video Link: {link}]"))
                 else:
-                    text_content = fetch_clean_html_content(link)
-                    brief_summary = summarize_link_briefly(text_content)
-                    article_context_summaries.append(("Article Context", brief_summary))
+                    # Again, skip if it's a Reddit link
+                    if ('reddit.com' not in link.lower()) and ('/r/' not in link.lower()):
+                        text_content = fetch_clean_html_content(link)
+                        brief_summary = summarize_link_briefly(text_content)
+                        article_context_summaries.append(("Article Context", brief_summary))
+                    else:
+                        # If it's just a reddit link, skip.
+                        pass
             except Exception as e:
                 logger.error(f"Could not fetch/parse link {link}: {str(e)}")
                 article_context_summaries.append(("Error", f"[Unable to summarize link: {link}]"))
@@ -703,8 +743,24 @@ Comments to analyze:
         # 4) Combine it into a final summary
         final_summary_parts = []
         final_summary_parts.append(f"**Post Summary:**\n\n{post_summary.strip()}\n")
-        for header, content in article_context_summaries:
+        
+        # Only include article context summaries if there are actual articles
+        article_summaries = [
+            (header, content) for header, content in article_context_summaries 
+            if header == "Article Context" and not content.startswith("[Unable to summarize")
+        ]
+        if article_summaries:
+            for header, content in article_summaries:
+                final_summary_parts.append(f"**{header}:**\n\n{content.strip()}\n")
+        
+        # Include other non-article summaries (YouTube, Images, etc)
+        other_summaries = [
+            (header, content) for header, content in article_context_summaries 
+            if header != "Article Context" and not content.startswith("[Unable to summarize")
+        ]
+        for header, content in other_summaries:
             final_summary_parts.append(f"**{header}:**\n\n{content.strip()}\n")
+            
         final_summary_parts.append(f"**What People Said:**\n\n{comments_summary}")
 
         draft_summary = "\n\n".join(final_summary_parts)
@@ -763,6 +819,43 @@ def make_openai_request(attempt=1, max_attempts=3):
             return make_openai_request(attempt + 1, max_attempts)
         else:
             raise e
+
+def get_poll_results(submission) -> str:
+    """
+    Extract poll results from a Reddit submission if it has a poll.
+    Returns empty string if no poll is found or no data is available.
+    """
+    try:
+        # Check for poll_data attribute
+        if not hasattr(submission, 'poll_data') or not submission.poll_data:
+            return ""
+
+        poll_data = submission.poll_data
+        total_votes = poll_data.total_vote_count
+        if total_votes == 0:
+            return "Poll has no votes yet."
+
+        # Gather options and their counts
+        options = []
+        for option in poll_data.options:
+            vote_percentage = (option.votes / total_votes) * 100
+            options.append(
+                f"- {option.text}: {vote_percentage:.1f}% ({option.votes} votes)"
+            )
+
+        # Sort options by descending vote count
+        options.sort(
+            key=lambda opt: float(re.search(r"\((\d+) votes\)", opt).group(1)),
+            reverse=True
+        )
+
+        results = [f"Poll Results (Total Votes: {total_votes})"]
+        results.extend(options)
+        return "\n".join(results)
+
+    except Exception as e:
+        logger.error(f"Error processing poll data: {str(e)}")
+        return ""
 
 ############################
 # MAIN (if you want to run)

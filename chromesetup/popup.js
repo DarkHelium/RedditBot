@@ -63,6 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
     chatContainer.style.display = 'none';
   });
 
-  // Removed automatic call to summarizePost() to prevent auto-click behavior
-  // summarizePost();
+  // Show chat container by default and hide summarizer
+  summarizerContainer.style.display = 'none';
+  chatContainer.style.display = 'flex';
 });

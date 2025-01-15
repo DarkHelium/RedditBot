@@ -1,4 +1,4 @@
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     const chatMessages = document.getElementById('chatMessages');
     const chatInput = document.getElementById('chatInput');
     const sendChatMessageButton = document.getElementById('sendChatMessage');
@@ -65,133 +65,174 @@ document.addEventListener('DOMContentLoaded', () => {
   
     // Function to show/hide loader
     const setLoading = (loading, isInitial = false) => {
-      chatLoader.style.display = loading ? 'flex' : 'none';
-      
-      if (loading) {
-        chatLoader.innerHTML = `
-          ${BOT_ICON}
-          <div class="loader-content">
-            <span>${isInitial ? 'Loading post content' : 'Thinking'}</span>
-            <div class="dots">
-              <div class="dot"></div>
-              <div class="dot"></div>
-              <div class="dot"></div>
-            </div>
+    chatLoader.style.display = loading ? 'flex' : 'none';
+    if (loading) {
+      chatLoader.innerHTML = `
+        ${BOT_ICON}
+        <div class="loader-content">
+          <span>${isInitial ? 'Loading post content' : 'Thinking'}</span>
+          <div class="dots">
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
           </div>
-        `;
-      }
-    };
-
-    // Function to get current post content
-    const getCurrentPostContent = async () => {
-      try {
-        setLoading(true, true);
-        // Get the current tab and send message to content.js
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        const response = await chrome.tabs.sendMessage(tab.id, { action: "getUrl" });
-        if (response && response.url) {
-          // Fetch the summary from our server
-          const encodedUrl = encodeURIComponent(response.url);
-          const summaryResponse = await fetch(`http://localhost:8000/summarize?url=${encodedUrl}`);
-          const data = await summaryResponse.json();
-          return data.Summary || '';
-        }
-      } catch (err) {
-        console.error('Error getting post content:', err);
-        return '';
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    // Function to escape HTML special characters
-    const escapeHtml = (text) => {
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
-    };
-
-    // Initialize post content when chat is opened
-    const initializeChat = async () => {
-      currentPostContent = await getCurrentPostContent();
-      if (currentPostContent) {
-        const contextMsg = document.createElement('div');
-        contextMsg.classList.add('message', 'bot-message');
-        contextMsg.innerHTML = `
-          ${BOT_ICON}
-          <div class="message-bubble">I'm ready to discuss this Reddit post with you. What would you like to know?</div>
-        `;
-        chatMessages.appendChild(contextMsg);
-      }
-    };
-    initializeChat();
-  
-    // Send a chat message
-    sendChatMessageButton.addEventListener('click', async () => {
-      const userMessage = chatInput.value.trim();
-      if (!userMessage) return;
-  
-      // Display user message
-      const userMsgDiv = document.createElement('div');
-      userMsgDiv.classList.add('message', 'user-message');
-      userMsgDiv.innerHTML = `
-        ${USER_ICON}
-        <div class="message-bubble">${escapeHtml(userMessage)}</div>
+        </div>
       `;
-      chatMessages.appendChild(userMsgDiv);
-  
-      chatInput.value = '';
-      chatMessages.scrollTop = chatMessages.scrollHeight;
-  
-      try {
-        setLoading(true);
-        
-        const response = await fetch('http://localhost:8000/chat', {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({ 
-            user_message: userMessage,
-            post_content: currentPostContent 
-          })
-        });
+    }
+  };
 
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
+  // Function to get current post content
+  const getCurrentPostContent = async () => {
+    try {
+      setLoading(true, true);
+      
+      // Get the current tab
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab) {
+        throw new Error('No active tab found');
+      }
 
-        const data = await response.json();
-        
-        if (data && data.bot_reply) {
-          const botMsgDiv = document.createElement('div');
-          botMsgDiv.classList.add('message', 'bot-message');
-          botMsgDiv.innerHTML = `
-            ${BOT_ICON}
-            <div class="message-bubble">${escapeHtml(data.bot_reply)}</div>
-          `;
-          chatMessages.appendChild(botMsgDiv);
-          chatMessages.scrollTop = chatMessages.scrollHeight;
-        }
-      } catch (err) {
-        console.error('Chat error:', err);
-        const errorMsgDiv = document.createElement('div');
-        errorMsgDiv.classList.add('message', 'bot-message');
-        errorMsgDiv.innerHTML = `
+      // Get URL directly from tab
+      const url = tab.url;
+      if (!url) {
+        throw new Error('No URL found');
+      }
+
+      if (!url.includes('reddit.com') || !url.includes('/comments/')) {
+        throw new Error('This page is not a Reddit post');
+      }
+
+      // Fetch the summary from the server
+      const encodedUrl = encodeURIComponent(url);
+      const summaryResponse = await fetch(`http://localhost:8000/summarize?url=${encodedUrl}`);
+      if (!summaryResponse.ok) {
+        const errorData = await summaryResponse.json();
+        throw new Error(errorData.error || 'Failed to get post summary');
+      }
+      
+      const data = await summaryResponse.json();
+      if (!data.Summary) {
+        throw new Error('No summary available for this post');
+      }
+      
+      return data.Summary;
+    } catch (err) {
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Function to display a message
+  const displayMessage = (message, isError = false) => {
+    const msgDiv = document.createElement('div');
+    msgDiv.classList.add('message', 'bot-message');
+    msgDiv.innerHTML = `
+      ${BOT_ICON}
+      <div class="message-bubble">${isError ? `Error: ${message}` : message}</div>
+    `;
+    chatMessages.appendChild(msgDiv);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  };
+
+  // Initialize chat content
+  const initializeChat = async () => {
+    try {
+      currentPostContent = await getCurrentPostContent();
+      
+      // Send initial message to chat endpoint to set up context
+      const response = await fetch('http://localhost:8000/chat', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ 
+          user_message: "Hi",
+          post_content: currentPostContent 
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      displayMessage("I'm ready to discuss this Reddit post with you. What would you like to know?");
+    } catch (err) {
+      console.error('Error in initializeChat:', err);
+      displayMessage(err.message, true);
+    }
+  };
+
+  // Start loading content immediately
+  await initializeChat();
+
+  // Handler for sending the user's message to your backend
+  sendChatMessageButton.addEventListener('click', async () => {
+    const userMessage = chatInput.value.trim();
+    if (!userMessage) return;
+  
+    // Display user message
+    const userMsgDiv = document.createElement('div');
+    userMsgDiv.classList.add('message', 'user-message');
+    userMsgDiv.innerHTML = `
+      ${USER_ICON}
+      <div class="message-bubble">${escapeHtml(userMessage)}</div>
+    `;
+    chatMessages.appendChild(userMsgDiv);
+    chatInput.value = '';
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  
+    try {
+      setLoading(true);
+      // Send message to your local server
+      const response = await fetch('http://localhost:8000/chat', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ 
+          user_message: userMessage,
+          post_content: currentPostContent 
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (data && data.bot_reply) {
+        const botMsgDiv = document.createElement('div');
+        botMsgDiv.classList.add('message', 'bot-message');
+        botMsgDiv.innerHTML = `
           ${BOT_ICON}
-          <div class="message-bubble">Error: ${escapeHtml(err.message)}. Make sure the chat server is running on port 8000.</div>
+          <div class="message-bubble">${escapeHtml(data.bot_reply)}</div>
         `;
-        chatMessages.appendChild(errorMsgDiv);
-      } finally {
-        setLoading(false);
+        chatMessages.appendChild(botMsgDiv);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
       }
-    });
+    } catch (err) {
+      console.error('Chat error:', err);
+      const errorMsgDiv = document.createElement('div');
+      errorMsgDiv.classList.add('message', 'bot-message');
+      errorMsgDiv.innerHTML = `
+        ${BOT_ICON}
+        <div class="message-bubble">Error: ${escapeHtml(err.message)}. Make sure the chat server is running on port 8000.</div>
+      `;
+      chatMessages.appendChild(errorMsgDiv);
+    } finally {
+      setLoading(false);
+    }
+  });
 
-    chatInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendChatMessageButton.click();
-      }
-    });
+  // Send on Enter (optional)
+  chatInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessageButton.click();
+    }
+  });
 });

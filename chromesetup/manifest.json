@@ -1,21 +1,28 @@
 {
   "manifest_version": 3,
-  "name": "Reddit Summarizer",
+  "name": "Reddit ChatBot",
   "version": "1.0",
   "permissions": [
     "activeTab",
-    "scripting"
+    "scripting",
+    "tabs"
   ],
   "host_permissions": [
     "http://localhost:8000/*",
-    "http://127.0.0.1:8000/*"
+    "http://127.0.0.1:8000/*",
+    "*://*.reddit.com/*"
   ],
   "action": {
     "default_popup": "popup.html"
   },
   "content_scripts": [
     {
-      "matches": ["*://*.reddit.com/*"],
+      "matches": [
+        "*://*.reddit.com/*",
+        "https://reddit.com/*",
+        "https://www.reddit.com/*",
+        "http://*.reddit.com/*"
+      ],
       "js": ["content.js"]
     }
   ],
