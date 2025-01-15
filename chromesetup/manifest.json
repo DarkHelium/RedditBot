@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Reddit ChatBot",
+  "name": "RedditGPT",
   "version": "1.0",
   "permissions": [
     "activeTab",
