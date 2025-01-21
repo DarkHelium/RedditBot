@@ -37,6 +37,11 @@ from urllib.parse import urlparse, parse_qs
 import cv2
 import base64
 
+# Add to imports section
+from moviepy.editor import VideoFileClip
+import speech_recognition as sr
+import tempfile
+
 # Load environment variables
 load_dotenv()
 
@@ -623,7 +628,10 @@ async def summarize_post(url: str = Query(..., description="URL of the Reddit po
                 # Get the original post from crosspost
                 original_submission = await reddit.submission(id=submission.crosspost_parent_list[0]['id'])
                 await original_submission.load()
-                linked_post_content = f"\nOriginal Post Content:\n{original_submission.title}\n{original_submission.selftext}"
+                linked_post_content = (
+                    f"\nOriginal Post Content:\n"
+                    f"{original_submission.title}\n{original_submission.selftext}"
+                )
             except Exception as e:
                 logger.error(f"Error fetching crosspost: {str(e)}")
         elif submission.url and 'reddit.com/r/' in submission.url and not submission.is_self:
@@ -632,7 +640,10 @@ async def summarize_post(url: str = Query(..., description="URL of the Reddit po
                 linked_url = submission.url
                 linked_submission = await reddit.submission(url=linked_url)
                 await linked_submission.load()
-                linked_post_content = f"\nLinked Post Content:\n{linked_submission.title}\n{linked_submission.selftext}"
+                linked_post_content = (
+                    f"\nLinked Post Content:\n"
+                    f"{linked_submission.title}\n{linked_submission.selftext}"
+                )
             except Exception as e:
                 logger.error(f"Error fetching linked post: {str(e)}")
 
@@ -645,8 +656,6 @@ async def summarize_post(url: str = Query(..., description="URL of the Reddit po
         poll_results = get_poll_results(submission)
         if poll_results:
             post_content_parts.append(poll_results)
-            # If it's just a poll with no additional content, 
-            # and there's no selftext or external URL, you could return now:
             if not submission.selftext and not submission.url:
                 return {"Summary": poll_results}
                 
@@ -655,12 +664,78 @@ async def summarize_post(url: str = Query(..., description="URL of the Reddit po
         if linked_post_content:
             post_content_parts.append(linked_post_content)
 
-        # If there's a main URL and it's not a self-post, handle it
-        if submission.url and not submission.is_self:
+        # ----------------------------------------------------------
+        # NEW - Image Post Handling
+        # ----------------------------------------------------------
+        # If the submission itself is an image post, or if the URL is from a known
+        # image host (e.g. i.redd.it, i.imgur.com, etc.), perform OCR
+        # (and skip fetch_clean_html_content).
+        # You can check submission.post_hint == "image" or submission.is_gallery.
+        # Also, we can do a small 'domain' check for i.redd.it, i.imgur.com, etc.
+        # ----------------------------------------------------------
+
+        def is_image_domain(link: str) -> bool:
+            return any(
+                domain in link.lower()
+                for domain in ["i.redd.it", "i.imgur.com", "ibb.co", "flickr.com"]
+            )
+
+        image_ocr_handled = False
+
+        if (
+            getattr(submission, "post_hint", "") == "image"
+            or is_image_domain(submission.url)
+            # or submission.preview might exist with images
+        ):
+            logger.info("Detected an image post. Attempting OCR.")
+
+            # Single image case
+            if not getattr(submission, "is_gallery", False):
+                ocr_text = extract_text_from_image(submission.url)
+                if ocr_text:
+                    summary = summarize_link_briefly(ocr_text)
+                    post_content_parts.append(f"\n[Image OCR Summary]\n{summary}")
+                else:
+                    post_content_parts.append("[Image was detected, but no text was found (or OCR failed).]")
+                image_ocr_handled = True
+
+            # If it's a gallery/album of multiple images
+            elif getattr(submission, "is_gallery", False):
+                logger.info("Detected a gallery post. Attempting OCR on each image in the gallery.")
+                media_metadata = submission.media_metadata
+                if not media_metadata:
+                    post_content_parts.append("[No accessible media metadata for gallery]")
+                else:
+                    gallery_summaries = []
+                    for media_id, media_data in media_metadata.items():
+                        # Each media_data typically has 'p', 's', etc. containing sources
+                        # We'll pick the largest or original source
+                        source = media_data.get('s', {})
+                        image_url = source.get('u') or source.get('gif')
+                        if image_url:
+                            # Reddit often replaces some characters. 
+                            # Clean up ampersands, e.g. &amp; => &
+                            image_url = image_url.replace("&amp;", "&")
+
+                            ocr_text = extract_text_from_image(image_url)
+                            if ocr_text:
+                                single_image_summary = summarize_link_briefly(ocr_text)
+                                gallery_summaries.append(f"- **Gallery Item**: {single_image_summary}")
+                            else:
+                                gallery_summaries.append("- [No text found in this gallery image]")
+                    
+                    if gallery_summaries:
+                        joined_summaries = "\n".join(gallery_summaries)
+                        post_content_parts.append(f"\n[Gallery OCR Summaries]\n{joined_summaries}")
+                    else:
+                        post_content_parts.append("[Gallery was detected, but no images or text found].")
+                image_ocr_handled = True
+
+        # If not an image post, handle external URL as an article or skip
+        if submission.url and not submission.is_self and not image_ocr_handled:
             try:
                 # Skip summarizing links that lead back to reddit.com or /r/
                 if ('reddit.com' not in submission.url.lower()) and ('/r/' not in submission.url.lower()):
-                    # Summarize external link content
                     normalized_url = normalize_reddit_url(submission.url)
                     article_content = fetch_clean_html_content(normalized_url)
                     article_summary = summarize_link_briefly(article_content)
@@ -668,12 +743,35 @@ async def summarize_post(url: str = Query(..., description="URL of the Reddit po
                 else:
                     # It's a Reddit link; skip external summarization
                     pass
-
             except Exception as e:
                 logger.error(f"Error processing URL {submission.url}: {str(e)}")
                 post_content_parts.append(f"[External Link: {submission.url}]")
 
-        # Combine into one big string
+        # Check for video content
+        video_content = ""
+        if hasattr(submission, 'media') and submission.media:
+            try:
+                # Handle Reddit hosted videos
+                if submission.is_video:
+                    video_url = submission.media['reddit_video']['fallback_url']
+                    logger.info(f"Found Reddit video: {video_url}")
+                    video_content = process_video_content(video_url)
+                    if video_content:
+                        post_content_parts.append(video_content)
+                        logger.info("Added video transcript to content")
+                
+                # Handle other video platforms (v.redd.it, etc.)
+                elif 'v.redd.it' in submission.url:
+                    video_content = process_video_content(submission.url)
+                    if video_content:
+                        post_content_parts.append(video_content)
+                        logger.info("Added external video transcript to content")
+                
+            except Exception as e:
+                logger.error(f"Error processing video: {str(e)}")
+                post_content_parts.append(f"[Video content available but could not be processed: {str(e)}]")
+
+        # Combine all content
         full_content = "\n\n".join(post_content_parts)
 
         # 2) Summarize the main post text
@@ -683,9 +781,8 @@ async def summarize_post(url: str = Query(..., description="URL of the Reddit po
         embedded_links = extract_links_from_text(full_content)
         article_context_summaries = []
         for link in embedded_links:
-            # If the embedded link is truly external, attempt summarization
             try:
-                if is_image_link(link):
+                if is_image_link(link) or is_image_domain(link):
                     summary = summarize_image_link(link)
                     article_context_summaries.append(("Image Info", summary))
                 elif 'youtube.com' in link or 'youtu.be' in link:
@@ -694,14 +791,11 @@ async def summarize_post(url: str = Query(..., description="URL of the Reddit po
                 elif is_video_link(link):
                     article_context_summaries.append(("Video Content", f"[Video Link: {link}]"))
                 else:
-                    # Again, skip if it's a Reddit link
+                    # Skip if it's a reddit link
                     if ('reddit.com' not in link.lower()) and ('/r/' not in link.lower()):
                         text_content = fetch_clean_html_content(link)
                         brief_summary = summarize_link_briefly(text_content)
                         article_context_summaries.append(("Article Context", brief_summary))
-                    else:
-                        # If it's just a reddit link, skip.
-                        pass
             except Exception as e:
                 logger.error(f"Could not fetch/parse link {link}: {str(e)}")
                 article_context_summaries.append(("Error", f"[Unable to summarize link: {link}]"))
@@ -743,7 +837,7 @@ Comments to analyze:
         # 4) Combine it into a final summary
         final_summary_parts = []
         final_summary_parts.append(f"**Post Summary:**\n\n{post_summary.strip()}\n")
-        
+
         # Only include article context summaries if there are actual articles
         article_summaries = [
             (header, content) for header, content in article_context_summaries 
@@ -760,7 +854,7 @@ Comments to analyze:
         ]
         for header, content in other_summaries:
             final_summary_parts.append(f"**{header}:**\n\n{content.strip()}\n")
-            
+        
         final_summary_parts.append(f"**What People Said:**\n\n{comments_summary}")
 
         draft_summary = "\n\n".join(final_summary_parts)
@@ -771,18 +865,6 @@ Comments to analyze:
         logger.error(f"An unexpected error occurred: {str(e)}")
         return {"error": f"An unexpected error occurred: {str(e)}"}
 
-@app.get("/summarize_video")
-def summarize_video_endpoint(video_path: str, chunk_minutes: int = 5):
-    """
-    Demonstration endpoint for chunk-based summarization 
-    of a local video at 'video_path'.
-    """
-    try:
-        final_summary = summarize_video_in_chunks(video_path, chunk_minutes)
-        return {"Summary": final_summary}
-    except Exception as e:
-        logger.error(f"Error summarizing large video: {str(e)}")
-        return {"error": str(e)}
 
 @app.get("/test-reddit")
 async def test_reddit_connection():
@@ -856,6 +938,94 @@ def get_poll_results(submission) -> str:
     except Exception as e:
         logger.error(f"Error processing poll data: {str(e)}")
         return ""
+
+def download_video(url: str) -> str:
+    """
+    Downloads a video from a URL and returns the local path.
+    """
+    try:
+        # Create a temporary file
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, 'temp_video.mp4')
+        
+        # Download the video
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+        
+        with open(temp_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        
+        return temp_path
+    except Exception as e:
+        logger.error(f"Error downloading video: {str(e)}")
+        return None
+
+def extract_audio_from_video(video_path: str) -> str:
+    """
+    Extracts audio from video and returns path to audio file.
+    """
+    try:
+        temp_dir = tempfile.gettempdir()
+        audio_path = os.path.join(temp_dir, 'temp_audio.wav')
+        
+        video = VideoFileClip(video_path)
+        video.audio.write_audiofile(audio_path)
+        video.close()
+        
+        return audio_path
+    except Exception as e:
+        logger.error(f"Error extracting audio: {str(e)}")
+        return None
+
+def transcribe_audio(audio_path: str) -> str:
+    """
+    Transcribes audio file to text using speech recognition.
+    """
+    try:
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(audio_path) as source:
+            audio = recognizer.record(source)
+            text = recognizer.recognize_google(audio)
+            return text
+    except Exception as e:
+        logger.error(f"Error transcribing audio: {str(e)}")
+        return None
+
+def process_video_content(video_url: str) -> str:
+    """
+    Process video content: download, extract audio, and transcribe.
+    """
+    try:
+        logger.info(f"Processing video from URL: {video_url}")
+        
+        # Download video
+        video_path = download_video(video_url)
+        if not video_path:
+            return "[Error: Could not download video]"
+            
+        # Extract audio
+        audio_path = extract_audio_from_video(video_path)
+        if not audio_path:
+            return "[Error: Could not extract audio from video]"
+            
+        # Transcribe audio
+        transcript = transcribe_audio(audio_path)
+        if not transcript:
+            return "[Error: Could not transcribe video audio]"
+            
+        # Clean up temporary files
+        try:
+            os.remove(video_path)
+            os.remove(audio_path)
+        except:
+            pass
+            
+        return f"Video Transcript:\n{transcript}"
+    except Exception as e:
+        logger.error(f"Error processing video content: {str(e)}")
+        return f"[Error processing video: {str(e)}]"
 
 ############################
 # MAIN (if you want to run)

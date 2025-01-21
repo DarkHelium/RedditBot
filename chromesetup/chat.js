@@ -63,176 +63,166 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     const USER_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 90" class="message-icon"><path d="M 45 0 C 20.147 0 0 20.147 0 45 c 0 24.853 20.147 45 45 45 s 45 -20.147 45 -45 C 90 20.147 69.853 0 45 0 z M 45 22.007 c 8.899 0 16.14 7.241 16.14 16.14 c 0 8.9 -7.241 16.14 -16.14 16.14 c -8.9 0 -16.14 -7.24 -16.14 -16.14 C 28.86 29.248 36.1 22.007 45 22.007 z M 45 83.843 c -11.135 0 -21.123 -4.885 -27.957 -12.623 c 3.177 -5.75 8.144 -10.476 14.05 -13.341 c 2.009 -0.974 4.354 -0.958 6.435 0.041 c 2.343 1.126 4.857 1.696 7.473 1.696 c 2.615 0 5.13 -0.571 7.473 -1.696 c 2.083 -1 4.428 -1.015 6.435 -0.041 c 5.906 2.864 10.872 7.591 14.049 13.341 C 66.123 78.957 56.135 83.843 45 83.843 z"/></svg>`;
   
+    // Function to escape HTML to prevent XSS
+    const escapeHtml = (text) => {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    };
+
     // Function to show/hide loader
     const setLoading = (loading, isInitial = false) => {
-    chatLoader.style.display = loading ? 'flex' : 'none';
-    if (loading) {
-      chatLoader.innerHTML = `
-        ${BOT_ICON}
-        <div class="loader-content">
-          <span>${isInitial ? 'Loading post content' : 'Thinking'}</span>
-          <div class="dots">
-            <div class="dot"></div>
-            <div class="dot"></div>
-            <div class="dot"></div>
-          </div>
-        </div>
-      `;
-    }
-  };
+        chatLoader.style.display = loading ? 'flex' : 'none';
+        if (loading) {
+            chatLoader.innerHTML = `
+                ${BOT_ICON}
+                <div class="loader-content">
+                    <span>${isInitial ? 'Loading post content' : 'Thinking'}</span>
+                    <div class="dots">
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                    </div>
+                </div>
+            `;
+        }
+    };
 
-  // Function to get current post content
-  const getCurrentPostContent = async () => {
-    try {
-      setLoading(true, true);
-      
-      // Get the current tab
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab) {
-        throw new Error('No active tab found');
-      }
+    // Function to get current post content
+    const getCurrentPostContent = async () => {
+        try {
+            setLoading(true, true);
+            
+            // Get the current tab
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (!tab) {
+                throw new Error('No active tab found');
+            }
 
-      // Get URL directly from tab
-      const url = tab.url;
-      if (!url) {
-        throw new Error('No URL found');
-      }
+            // Get URL directly from tab
+            const url = tab.url;
+            if (!url) {
+                throw new Error('No URL found');
+            }
 
-      if (!url.includes('reddit.com') || !url.includes('/comments/')) {
-        throw new Error('This page is not a Reddit post');
-      }
+            if (!url.includes('reddit.com') || !url.includes('/comments/')) {
+                throw new Error('This page is not a Reddit post');
+            }
 
-      // Fetch the summary from the server
-      const encodedUrl = encodeURIComponent(url);
-      const summaryResponse = await fetch(`http://localhost:8000/summarize?url=${encodedUrl}`);
-      if (!summaryResponse.ok) {
-        const errorData = await summaryResponse.json();
-        throw new Error(errorData.error || 'Failed to get post summary');
-      }
-      
-      const data = await summaryResponse.json();
-      if (!data.Summary) {
-        throw new Error('No summary available for this post');
-      }
-      
-      return data.Summary;
-    } catch (err) {
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  };
+            // Fetch the summary from the server
+            const encodedUrl = encodeURIComponent(url);
+            const summaryResponse = await fetch(`http://localhost:8000/summarize?url=${encodedUrl}`);
+            if (!summaryResponse.ok) {
+                const errorData = await summaryResponse.json();
+                throw new Error(errorData.error || 'Failed to get post summary');
+            }
+            
+            const data = await summaryResponse.json();
+            if (!data.Summary) {
+                throw new Error('No summary available for this post');
+            }
+            
+            return data.Summary;
+        } catch (err) {
+            throw err;
+        } finally {
+            setLoading(false);
+        }
+    };
 
-  // Function to display a message
-  const displayMessage = (message, isError = false) => {
-    const msgDiv = document.createElement('div');
-    msgDiv.classList.add('message', 'bot-message');
-    msgDiv.innerHTML = `
-      ${BOT_ICON}
-      <div class="message-bubble">${isError ? `Error: ${message}` : message}</div>
-    `;
-    chatMessages.appendChild(msgDiv);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-  };
-
-  // Initialize chat content
-  const initializeChat = async () => {
-    try {
-      currentPostContent = await getCurrentPostContent();
-      
-      // Send initial message to chat endpoint to set up context
-      const response = await fetch('http://localhost:8000/chat', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({ 
-          user_message: "Hi",
-          post_content: currentPostContent 
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      displayMessage("I'm ready to discuss this Reddit post with you. What would you like to know?");
-    } catch (err) {
-      console.error('Error in initializeChat:', err);
-      displayMessage(err.message, true);
-    }
-  };
-
-  // Start loading content immediately
-  await initializeChat();
-
-  // Handler for sending the user's message to your backend
-  sendChatMessageButton.addEventListener('click', async () => {
-    const userMessage = chatInput.value.trim();
-    if (!userMessage) return;
-  
-    // Display user message
-    const userMsgDiv = document.createElement('div');
-    userMsgDiv.classList.add('message', 'user-message');
-    userMsgDiv.innerHTML = `
-      ${USER_ICON}
-      <div class="message-bubble">${escapeHtml(userMessage)}</div>
-    `;
-    chatMessages.appendChild(userMsgDiv);
-    chatInput.value = '';
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-  
-    try {
-      setLoading(true);
-      // Send message to your local server
-      const response = await fetch('http://localhost:8000/chat', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({ 
-          user_message: userMessage,
-          post_content: currentPostContent 
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      if (data && data.bot_reply) {
-        const botMsgDiv = document.createElement('div');
-        botMsgDiv.classList.add('message', 'bot-message');
-        botMsgDiv.innerHTML = `
-          ${BOT_ICON}
-          <div class="message-bubble">${escapeHtml(data.bot_reply)}</div>
+    // Function to display a message
+    const displayMessage = (message, isError = false, isUser = false) => {
+        const msgDiv = document.createElement('div');
+        msgDiv.classList.add('message', isUser ? 'user-message' : 'bot-message');
+        msgDiv.innerHTML = `
+            ${isUser ? USER_ICON : BOT_ICON}
+            <div class="message-bubble">${isError ? `Error: ${message}` : message}</div>
         `;
-        chatMessages.appendChild(botMsgDiv);
+        chatMessages.appendChild(msgDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
-      }
-    } catch (err) {
-      console.error('Chat error:', err);
-      const errorMsgDiv = document.createElement('div');
-      errorMsgDiv.classList.add('message', 'bot-message');
-      errorMsgDiv.innerHTML = `
-        ${BOT_ICON}
-        <div class="message-bubble">Error: ${escapeHtml(err.message)}. Make sure the chat server is running on port 8000.</div>
-      `;
-      chatMessages.appendChild(errorMsgDiv);
-    } finally {
-      setLoading(false);
-    }
-  });
+    };
 
-  // Send on Enter (optional)
-  chatInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendChatMessageButton.click();
-    }
-  });
+    // Function to send chat message
+    const sendMessage = async (message) => {
+        if (!message.trim()) return;
+
+        // Display user message
+        displayMessage(escapeHtml(message), false, true);
+        chatInput.value = '';
+
+        try {
+            setLoading(true);
+            const response = await fetch('http://localhost:8000/chat', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({ 
+                    user_message: message,
+                    post_content: currentPostContent 
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+            if (data && data.bot_reply) {
+                displayMessage(escapeHtml(data.bot_reply));
+            }
+        } catch (err) {
+            console.error('Chat error:', err);
+            displayMessage(err.message + '. Make sure the chat server is running on port 8000.', true);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Initialize chat content
+    const initializeChat = async () => {
+        try {
+            currentPostContent = await getCurrentPostContent();
+            
+            // Send initial message to chat endpoint to set up context
+            const response = await fetch('http://localhost:8000/chat', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({ 
+                    user_message: "Hi",
+                    post_content: currentPostContent 
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+            displayMessage("I'm ready to discuss this Reddit post with you. What would you like to know?");
+        } catch (err) {
+            console.error('Error in initializeChat:', err);
+            displayMessage(err.message, true);
+        }
+    };
+
+    // Start loading content immediately
+    await initializeChat();
+
+    // Add click event listener to send button
+    sendChatMessageButton.addEventListener('click', () => {
+        sendMessage(chatInput.value);
+    });
+
+    // Add enter key listener
+    chatInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage(chatInput.value);
+        }
+    });
 });
