@@ -15,6 +15,7 @@ import time
 from openai import OpenAIError
 from pydantic import BaseModel
 from typing import List
+import asciidoc
 
 # Additional libraries for HTML parsing, summarization, OCR, YouTube transcripts
 import requests
@@ -572,9 +573,38 @@ def summarize_video_in_chunks(video_path: str, chunk_minutes=5) -> str:
 
 def clean_paragraph_spacing(text: str) -> str:
     """
-    Replaces 2+ consecutive newlines with a single newline.
+    Converts text to AsciiDoc format and cleans up spacing.
     """
-    text = re.sub(r'\n{2,}', '\n', text)
+    # Split into lines and process
+    lines = text.split('\n')
+    formatted_lines = []
+    
+    for i, line in enumerate(lines):
+        stripped_line = line.strip()
+        # Convert headers to AsciiDoc format
+        if stripped_line.startswith(('**', '#')):
+            level = stripped_line.count('#') if '#' in stripped_line else 1
+            clean_text = stripped_line.replace('**', '').replace('#', '').strip()
+            formatted_lines.append(f"{'=' * level} {clean_text}")
+        # Convert bullet points to AsciiDoc format
+        elif stripped_line.startswith(('- ', '* ', '+ ')):
+            if i > 0 and not lines[i-1].strip().startswith(('- ', '* ', '+ ')):
+                formatted_lines.append('')
+            bullet_content = stripped_line[2:].strip()
+            formatted_lines.append(f"* {bullet_content}")
+        else:
+            formatted_lines.append(line)
+    
+    text = '\n'.join(formatted_lines)
+    
+    # Clean up excessive newlines
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    # Convert other formatting to AsciiDoc
+    text = re.sub(r'\*\*(.*?)\*\*', r'*\1*', text)  # Bold
+    text = re.sub(r'`(.*?)`', r'+\1+', text)        # Monospace
+    text = re.sub(r'\[(.*?)\]\((.*?)\)', r'\1 (\2)', text)  # Links
+    
     return text.strip()
 
 ########################################

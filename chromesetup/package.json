@@ -1,0 +1,16 @@
+{
+  "name": "chromesetup",
+  "version": "1.0.0",
+  "main": "chat.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@asciidoctor/core": "^3.0.4",
+    "asciidoctor": "^3.0.4"
+  }
+}

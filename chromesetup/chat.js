@@ -1,3 +1,30 @@
+// Remove unused imports and initialize Asciidoctor directly
+let asciidoctor = window.Asciidoctor ? window.Asciidoctor() : null;
+
+// Add this function to convert AsciiDoc to HTML
+function renderAsciidoc(content) {
+    if (!content) return content;
+    
+    // Convert markdown-style bullet points to AsciiDoc format
+    let formattedContent = content
+        .split('\n')
+        .map(line => {
+            // If line starts with "- ", convert to AsciiDoc bullet point
+            if (line.trim().startsWith('- ')) {
+                return line.replace(/^(\s*)-\s/, '$1* ');
+            }
+            return line;
+        })
+        .join('\n');
+
+    try {
+        return asciidoctor ? asciidoctor.convert(formattedContent) : formattedContent;
+    } catch (error) {
+        console.error('AsciiDoc conversion error:', error);
+        return formattedContent;
+    }
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     const chatMessages = document.getElementById('chatMessages');
     const chatInput = document.getElementById('chatInput');
@@ -134,9 +161,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     const displayMessage = (message, isError = false, isUser = false) => {
         const msgDiv = document.createElement('div');
         msgDiv.classList.add('message', isUser ? 'user-message' : 'bot-message');
+        
+        let content;
+        if (!isUser && !isError) {
+            content = renderAsciidoc(message);
+        } else {
+            content = isError ? `Error: ${message}` : message;
+        }
+        
         msgDiv.innerHTML = `
             ${isUser ? USER_ICON : BOT_ICON}
-            <div class="message-bubble">${isError ? `Error: ${message}` : message}</div>
+            <div class="message-bubble">${content}</div>
         `;
         chatMessages.appendChild(msgDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
